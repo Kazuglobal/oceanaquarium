@@ -51,52 +51,134 @@ const ENVIRONMENTAL_EFFECTS = {
     }
 };
 
+// タッチポイントを管理するクラスを追加
+class TouchPoint {
+    constructor(x, y, type = 'attract') {
+        this.x = x;
+        this.y = y;
+        this.type = type; // 'attract' または 'repel'
+        this.radius = 150; // 影響範囲
+        this.strength = type === 'attract' ? 2 : 3; // 引力/斥力の強さ
+        this.alpha = 255; // 表示の透明度
+        this.color = type === 'attract' ? color(100, 200, 255, this.alpha) : color(255, 100, 100, this.alpha);
+    }
+
+    draw() {
+        push();
+        noFill();
+        stroke(this.color);
+        strokeWeight(2);
+        ellipse(this.x, this.y, this.radius * 2);
+        // 中心点を表示
+        fill(this.color);
+        noStroke();
+        ellipse(this.x, this.y, 10);
+        pop();
+    }
+}
+
+// タッチポイントを格納する配列
+let touchPoints = [];
+
 class Fish {
     constructor(sprite, x, y) {
         this.sprite = sprite;
         this.x = x;
         this.y = y;
-        this.speed = random(1, 2);
-        this.angle = random(TWO_PI); // 移動方向の角度
-        this.targetAngle = this.angle; // 目標の角度
-        this.rotationSpeed = 0.05; // 回転速度
-        this.amplitude = random(20, 40);
+        
+        // 物理パラメータ
+        this.velocity = createVector(0, 0);  // 速度ベクトル
+        this.acceleration = createVector(0, 0);  // 加速度ベクトル
+        this.maxSpeed = random(2, 3);        // 最大速度
+        this.maxForce = 0.2;                // 最大操舵力
+        this.mass = this.size;              // 質量（サイズに比例）
+        
+        // 基本パラメータ
+        this.angle = random(TWO_PI);
         this.size = random(0.8, 1.2);
         this.isFlipped = false;
         this.flipTransition = 0;
         this.flipDuration = 15;
+        this.touchDistance = 50;  // タッチ判定の距離を追加
+        this.isSelected = false;  // 選択状態を追加
         
-        // アニメーション用のプロパティ
+        // アニメーションパラメータ
         this.tailAngle = 0;
-        this.tailSpeed = 0.1;
+        this.tailSpeed = 0.2;
         this.bodyWave = 0;
-        this.bodyWaveSpeed = 0.05;
+        this.bodyWaveSpeed = 0.1;
         this.verticalOffset = 0;
-        this.verticalSpeed = 0.02;
+        this.verticalSpeed = 0.03;
         
-        // 移動制御用のプロパティ
-        this.directionChangeInterval = random(100, 200); // 方向転換の間隔
-        this.directionTimer = 0;
+        // 行動パラメータ
+        this.neighborRadius = 100;          // 群れ認識の範囲
+        this.separationWeight = 1.5;        // 分離力の重み
+        this.alignmentWeight = 1.0;         // 整列力の重み
+        this.cohesionWeight = 1.0;          // 結合力の重み
+        this.wanderAngle = random(TWO_PI);  // ランダム遊泳用の角度
+        this.wanderRadius = 50;             // ランダム遊泳の半径
         
-        // タッチ操作用のプロパティを追加
-        this.isSelected = false;
-        this.touchDistance = 50; // タッチ判定の距離
-        this.targetReached = false; // 目標に到達したかどうか
+        // その他のプロパティは維持
+        this.targetReached = false;
+    }
+
+    // 群れの行動を計算
+    calculateFlockingForce() {
+        let separation = createVector(0, 0);
+        let alignment = createVector(0, 0);
+        let cohesion = createVector(0, 0);
+        let neighborCount = 0;
         
-        // 動作パターン用のプロパティを追加
-        this.baseSpeed = random(1, 2);
-        this.currentSpeed = this.baseSpeed;
-        this.maxSpeed = this.baseSpeed * 3;
-        this.actionTimer = 0;
-        this.actionInterval = random(100, 200);
-        this.currentAction = 'normal';
-        this.spinAngle = 0;
-        this.isSpinning = false;
-        this.spinSpeed = 0;
-        this.isStopped = false;
-        this.stopDuration = 0;
+        for (let other of fishes) {
+            if (other !== this) {
+                let d = dist(this.x, this.y, other.x, other.y);
+                if (d < this.neighborRadius) {
+                    // 分離（近すぎる仲間から離れる）
+                    let diff = createVector(this.x - other.x, this.y - other.y);
+                    diff.div(d * d);  // 距離の二乗で重み付け
+                    separation.add(diff);
+                    
+                    // 整列（仲間と同じ方向に向かう）
+                    let otherVelocity = createVector(cos(other.angle), sin(other.angle));
+                    alignment.add(otherVelocity);
+                    
+                    // 結合（仲間の平均位置に向かう）
+                    cohesion.add(createVector(other.x, other.y));
+                    
+                    neighborCount++;
+                }
+            }
+        }
         
-        console.log('魚を作成:', x, y, this.angle, this.size, sprite ? 'カスタム' : 'デフォルト');
+        if (neighborCount > 0) {
+            separation.mult(this.separationWeight);
+            
+            alignment.div(neighborCount);
+            alignment.setMag(this.maxSpeed);
+            alignment.sub(this.velocity);
+            alignment.limit(this.maxForce);
+            alignment.mult(this.alignmentWeight);
+            
+            cohesion.div(neighborCount);
+            cohesion.sub(createVector(this.x, this.y));
+            cohesion.setMag(this.maxSpeed);
+            cohesion.sub(this.velocity);
+            cohesion.limit(this.maxForce);
+            cohesion.mult(this.cohesionWeight);
+            
+            return separation.add(alignment).add(cohesion);
+        }
+        return createVector(0, 0);
+    }
+
+    // ランダムな遊泳力を計算
+    calculateWanderForce() {
+        this.wanderAngle += random(-0.3, 0.3);
+        let wanderPoint = createVector(cos(this.angle), sin(this.angle));
+        wanderPoint.mult(this.wanderRadius);
+        wanderPoint.add(createVector(cos(this.wanderAngle), sin(this.wanderAngle)));
+        wanderPoint.setMag(this.maxForce * 0.5);
+        return wanderPoint;
     }
 
     // タッチ判定を行うメソッド
@@ -104,163 +186,88 @@ class Fish {
         let d = dist(this.x, this.y, touchX, touchY);
         if (d < this.touchDistance * this.size) {
             this.isSelected = true;
-            // タッチ位置への角度を計算
-            let targetAngle = atan2(touchY - this.y, touchX - this.x);
-            this.targetAngle = targetAngle;
-            this.targetReached = false;
             return true;
         }
         return false;
     }
 
-    // ランダムな行動を選択
-    selectRandomAction() {
-        let actions = [
-            { name: 'normal', weight: 0.4 },
-            { name: 'dash', weight: 0.2 },
-            { name: 'spin', weight: 0.15 },
-            { name: 'stop', weight: 0.15 },
-            { name: 'zigzag', weight: 0.1 }
-        ];
-        
-        let totalWeight = actions.reduce((sum, action) => sum + action.weight, 0);
-        let r = random(totalWeight);
-        let sum = 0;
-        
-        for (let action of actions) {
-            sum += action.weight;
-            if (r <= sum) {
-                return action.name;
+    // タッチポイントからの影響を計算
+    calculateTouchInfluence() {
+        let totalForce = createVector(0, 0);
+
+        for (let point of touchPoints) {
+            let d = dist(this.x, this.y, point.x, point.y);
+            if (d < point.radius) {
+                let force = map(d, 0, point.radius, point.strength, 0);
+                let angle = atan2(this.y - point.y, this.x - point.x);
+                
+                if (point.type === 'attract') {
+                    angle += PI;  // 引力の場合は角度を反転
+                }
+                
+                let forceVector = createVector(cos(angle) * force, sin(angle) * force);
+                totalForce.add(forceVector);
             }
         }
-        return 'normal';
+
+        return totalForce;
     }
 
     update() {
-        // アクションの更新
-        this.actionTimer++;
-        if (this.actionTimer >= this.actionInterval && !this.isSelected) {
-            this.actionTimer = 0;
-            this.actionInterval = random(100, 200);
-            this.currentAction = this.selectRandomAction();
-            
-            // アクションに応じた初期設定
-            switch (this.currentAction) {
-                case 'dash':
-                    this.currentSpeed = this.maxSpeed;
-                    break;
-                case 'spin':
-                    this.isSpinning = true;
-                    this.spinSpeed = random(0.2, 0.4);
-                    this.spinAngle = 0;
-                    break;
-                case 'stop':
-                    this.isStopped = true;
-                    this.stopDuration = random(30, 60);
-                    this.currentSpeed = 0;
-                    break;
-                case 'zigzag':
-                    this.zigzagAngle = 0;
-                    break;
-                default:
-                    this.currentSpeed = this.baseSpeed;
-                    break;
-            }
-        }
-
-        // アクションの実行
-        if (!this.isSelected) {
-            switch (this.currentAction) {
-                case 'dash':
-                    this.currentSpeed = lerp(this.currentSpeed, this.baseSpeed, 0.02);
-                    break;
-                case 'spin':
-                    this.spinAngle += this.spinSpeed;
-                    if (this.spinAngle >= TWO_PI) {
-                        this.isSpinning = false;
-                        this.currentAction = 'normal';
-                    }
-                    break;
-                case 'stop':
-                    if (this.stopDuration > 0) {
-                        this.stopDuration--;
-                    } else {
-                        this.isStopped = false;
-                        this.currentSpeed = this.baseSpeed;
-                        this.currentAction = 'normal';
-                    }
-                    break;
-                case 'zigzag':
-                    this.zigzagAngle += 0.1;
-                    this.targetAngle += sin(this.zigzagAngle) * 0.2;
-                    break;
-            }
-        }
-
-        // 通常の更新処理
-        if (!this.isSelected && !this.isStopped) {
-            this.directionTimer++;
-            if (this.directionTimer >= this.directionChangeInterval) {
-                this.targetAngle = random(TWO_PI);
-                this.directionTimer = 0;
-                this.directionChangeInterval = random(100, 200);
-            }
-        }
+        // 力の計算
+        let flockForce = this.calculateFlockingForce();
+        let wanderForce = this.calculateWanderForce();
+        let touchForce = this.calculateTouchInfluence();
+        
+        // 力の適用
+        this.acceleration.mult(0);  // 加速度をリセット
+        this.acceleration.add(flockForce);
+        this.acceleration.add(wanderForce);
+        this.acceleration.add(createVector(touchForce.x, touchForce.y));
+        
+        // 速度と位置の更新
+        this.velocity.add(this.acceleration);
+        this.velocity.limit(this.maxSpeed);
+        this.x += this.velocity.x;
+        this.y += this.velocity.y;
         
         // 角度の更新
-        let angleDiff = this.targetAngle - this.angle;
-        if (angleDiff > PI) angleDiff -= TWO_PI;
-        if (angleDiff < -PI) angleDiff += TWO_PI;
-        
-        let rotationSpeed = this.isSelected ? 0.2 : this.rotationSpeed;
-        this.angle += angleDiff * rotationSpeed;
-        
-        if (this.isSpinning) {
-            this.angle += this.spinSpeed;
+        if (this.velocity.mag() > 0.1) {
+            this.angle = this.velocity.heading();
         }
         
-        // 位置の更新
-        if (!this.isStopped) {
-            this.x += cos(this.angle) * this.currentSpeed;
-            this.y += sin(this.angle) * this.currentSpeed;
-        }
-        
-        // 画面端での跳ね返り処理
+        // 画面端での跳ね返り
         const margin = 50;
         if (this.x > width - margin) {
             this.x = width - margin;
-            this.targetAngle = random(PI/2, 3*PI/2);
-            this.isSelected = false;
+            this.velocity.x *= -1;
         }
         if (this.x < margin) {
             this.x = margin;
-            this.targetAngle = random(-PI/2, PI/2);
-            this.isSelected = false;
+            this.velocity.x *= -1;
         }
         if (this.y > height - margin) {
             this.y = height - margin;
-            this.targetAngle = random(-PI, 0);
-            this.isSelected = false;
+            this.velocity.y *= -1;
         }
         if (this.y < margin) {
             this.y = margin;
-            this.targetAngle = random(0, PI);
-            this.isSelected = false;
+            this.velocity.y *= -1;
         }
         
         // 魚の向きを移動方向に合わせる
         this.isFlipped = cos(this.angle) < 0;
         
         // アニメーションの更新
-        this.tailAngle = sin(frameCount * this.tailSpeed) * 0.3;
-        this.bodyWave = sin(frameCount * this.bodyWaveSpeed) * 0.1;
+        let speed = this.velocity.mag();
+        this.tailAngle = sin(frameCount * this.tailSpeed * speed) * 0.3;
+        this.bodyWave = sin(frameCount * this.bodyWaveSpeed * speed) * 0.1;
         this.verticalOffset = sin(frameCount * this.verticalSpeed) * 5;
         
-        // 泡の生成（速度に応じて頻度を変更）
-        let bubbleChance = map(this.currentSpeed, this.baseSpeed, this.maxSpeed, 0.1, 0.3);
-        if (random() < bubbleChance) {
-            let bubbleX = this.x + cos(this.angle) * -20;
-            let bubbleY = this.y + sin(this.angle) * -20;
+        // 泡の生成
+        if (random() < speed / this.maxSpeed * 0.3) {
+            let bubbleX = this.x + cos(this.angle + PI) * 20;
+            let bubbleY = this.y + sin(this.angle + PI) * 20;
             bubbles.push(new Bubble(bubbleX, bubbleY));
         }
     }
@@ -382,7 +389,7 @@ function preload() {
     // 画像の読み込みを削除し、デフォルトの魚は図形で描画
 }
 
-function setup() {
+async function setup() {
     createCanvas(windowWidth, windowHeight);
     imageMode(CENTER);
     frameRate(60);
@@ -392,6 +399,10 @@ function setup() {
     
     // アニメーションループを開始
     loop();
+
+    // Kinectの初期化を試みる
+    await kinectHandler.init();
+    updateStatus();
 }
 
 function createUnderwaterBackground() {
@@ -451,10 +462,34 @@ function draw() {
         }
     }
     
+    // Kinectからの手の位置を取得して処理
+    if (kinectHandler.isKinectConnected()) {
+        const hands = kinectHandler.getHandPositions();
+        for (let hand of hands) {
+            // 手の深度に応じて影響力を調整
+            const strength = map(hand.depth, kinectHandler.minDepth, kinectHandler.maxDepth, 3, 1);
+            // 深い位置（遠い）の手は魚を引き寄せ、浅い位置（近い）の手は魚を追い払う
+            const type = hand.depth > (kinectHandler.maxDepth + kinectHandler.minDepth) / 2 ? 'attract' : 'repel';
+            
+            // タッチポイントとして追加
+            touchPoints.push(new TouchPoint(hand.x, hand.y, type));
+        }
+    }
+
+    // タッチポイントを描画
+    for (let point of touchPoints) {
+        point.draw();
+    }
+    
     // 魚の更新と描画
     for (let fish of fishes) {
         fish.update();
         fish.draw();
+    }
+
+    // Kinectの手の位置が更新されるたびにtouchPointsをクリア
+    if (kinectHandler.isKinectConnected()) {
+        touchPoints = [];
     }
 }
 
@@ -744,9 +779,9 @@ function adjustFishSpeed(value) {
         fish.speed = speedScale * (fish.direction < 0 ? -1 : 1);
         
         // アニメーション速度も調整
-        fish.tailSpeed = 0.1 * speedScale;
-        fish.bodyWaveSpeed = 0.05 * speedScale;
-        fish.verticalSpeed = 0.02 * speedScale;
+        fish.tailSpeed = 0.2 * speedScale;
+        fish.bodyWaveSpeed = 0.1 * speedScale;
+        fish.verticalSpeed = 0.03 * speedScale;
     }
 }
 
@@ -760,19 +795,31 @@ function mouseMoved() {
     }
 }
 
-// タッチデバイス用のイベントハンドラを追加
-function touchMoved(event) {
-    // デフォルトのスクロール動作を防止
-    event.preventDefault();
-    
+// タッチイベントハンドラーを更新
+function touchStarted() {
     // コントロールパネルの領域を除外
-    if (event.touches[0].clientY > height - 100) return;
+    if (mouseY > height - 100) return;
     
-    // すべての魚に対してタッチ判定を行う
-    for (let fish of fishes) {
-        fish.checkTouch(event.touches[0].clientX, event.touches[0].clientY);
+    // 右クリックまたは2本指タッチで逃避モード
+    let isRepelMode = mouseButton === RIGHT || touches.length >= 2;
+    
+    // タッチポイントを追加
+    if (touches.length > 0) {
+        // マルチタッチの場合
+        for (let touch of touches) {
+            touchPoints.push(new TouchPoint(touch.x, touch.y, isRepelMode ? 'repel' : 'attract'));
+        }
+    } else {
+        // マウスクリックの場合
+        touchPoints.push(new TouchPoint(mouseX, mouseY, isRepelMode ? 'repel' : 'attract'));
     }
     
+    return false; // デフォルトの動作を防止
+}
+
+function touchEnded() {
+    // タッチが終了したらポイントをクリア
+    touchPoints = [];
     return false;
 }
 
@@ -812,5 +859,17 @@ class Bubble {
 
     isDead() {
         return this.alpha <= 0;
+    }
+}
+
+// ステータス表示を更新
+function updateStatus() {
+    const statusDiv = document.getElementById('status');
+    if (kinectHandler.isKinectConnected()) {
+        statusDiv.textContent = 'Kinect: 接続済み';
+        statusDiv.style.color = '#00ff00';
+    } else {
+        statusDiv.textContent = 'Kinect: 未接続 (タッチ操作のみ)';
+        statusDiv.style.color = '#ff9900';
     }
 }
