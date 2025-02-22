@@ -13,46 +13,53 @@
         }
         #drawing-controls {
             position: fixed;
-            left: 50%;
-            bottom: 20px;
-            transform: translateX(-50%);
+            right: 10px;
+            bottom: 10px;
+            transform: none;
             background: rgba(0, 0, 0, 0.7);
             color: white;
-            padding: 10px;
+            padding: 5px;
             border-radius: 10px;
             text-align: center;
             display: flex;
-            gap: 10px;
-            align-items: center;
+            flex-direction: column;
+            gap: 5px;
+            align-items: stretch;
+            max-width: 200px;
+            font-size: 12px;
         }
         .file-upload {
             background: #2196F3;
             color: white;
-            padding: 10px 20px;
+            padding: 5px 10px;
             border-radius: 5px;
             cursor: pointer;
             display: inline-block;
+            font-size: 11px;
         }
         .control-button {
             background: #4CAF50;
             color: white;
-            padding: 10px 20px;
+            padding: 5px 10px;
             border-radius: 5px;
             cursor: pointer;
             border: none;
-            font-size: 16px;
+            font-size: 11px;
         }
         .slider-container {
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 3px;
+            padding: 2px 0;
         }
         .slider-label {
-            font-size: 14px;
+            font-size: 11px;
             white-space: nowrap;
+            min-width: 40px;
         }
         input[type="range"] {
-            width: 100px;
+            width: 80px;
+            height: 15px;
         }
         input[type="file"] {
             display: none;
@@ -83,6 +90,35 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .pollution-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            align-items: stretch;
+            margin-top: 5px;
+            padding: 3px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+        }
+        
+        .control-button.danger {
+            background: #dc3545;
+            font-size: 11px;
+            padding: 3px 8px;
+        }
+        
+        .control-button.cleanup {
+            background: #28a745;
+            font-size: 11px;
+            padding: 3px 8px;
+        }
+        
+        .pollution-level {
+            color: white;
+            font-size: 11px;
+            text-align: center;
+            padding: 2px 0;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/webkinect2@0.2.0/dist/webkinect2.min.js"></script>
@@ -106,6 +142,14 @@
         <div class="slider-container">
             <span class="slider-label">速さ:</span>
             <input type="range" min="50" max="150" value="100" oninput="adjustFishSpeed(this.value)">
+        </div>
+        <div class="pollution-controls">
+            <button class="control-button danger" onclick="addTrash('plastic')">🗑️ プラスチックゴミ</button>
+            <button class="control-button danger" onclick="addTrash('chemical')">⚠️ 有害物質</button>
+            <button class="control-button cleanup" onclick="startCleanup()">🧹 クリーンアップ</button>
+            <div class="pollution-level">
+                汚染レベル: <span id="pollution-level">0</span>%
+            </div>
         </div>
     </div>
     <script src="sketch.js"></script>
